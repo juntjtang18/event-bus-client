@@ -1,0 +1,68 @@
+{
+  "name": "@langgo/event-bus-client",
+  "version": "0.1.0",
+  "description": "Driver-based event bus client for Google Pub/Sub, RabbitMQ, and Postgres.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/juntjtang18/event-bus-client.git"
+  },
+  "homepage": "https://github.com/juntjtang18/event-bus-client#readme",
+  "bugs": {
+    "url": "https://github.com/juntjtang18/event-bus-client/issues"
+  },
+  "publishConfig": {
+    "registry": "https://npm.pkg.github.com"
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "clean": "rm -rf dist",
+    "prepare": "npm run build",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "keywords": [
+    "event-bus",
+    "pubsub",
+    "rabbitmq",
+    "google-pubsub",
+    "postgres"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "peerDependencies": {
+    "@google-cloud/pubsub": "^4.0.0",
+    "amqplib": "^0.10.0",
+    "pg": "^8.0.0"
+  },
+  "peerDependenciesMeta": {
+    "@google-cloud/pubsub": {
+      "optional": true
+    },
+    "amqplib": {
+      "optional": true
+    },
+    "pg": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@google-cloud/pubsub": "file:test/stubs/google-cloud/pubsub",
+    "@types/node": "^22.15.21",
+    "typescript": "^5.8.3",
+    "vitest": "^3.2.4"
+  }
+}
