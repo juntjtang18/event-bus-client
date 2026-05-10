@@ -30,12 +30,51 @@ npm install pg
 
 ## Usage
 
+### Explicit API
+
+```ts
+import { createEventBus } from '@langgo/event-bus-client';
+
+const eventBus = createEventBus({
+  driver: 'postgres',
+  config: {
+    connectionString: process.env.EVENT_BUS_POSTGRES_URL!,
+    channelPrefix: process.env.EVENT_BUS_CHANNEL_PREFIX || 'event_bus',
+  },
+});
+```
+
+### Convenience API
+
+```ts
+import { createEventBusFromEnv } from '@langgo/event-bus-client';
+
+const eventBus = createEventBusFromEnv();
+```
+
+`createEventBusFromEnv()` reads:
+
+- `EVENT_BUS_DRIVER`
+- `EVENT_BUS_POSTGRES_URL`
+- `EVENT_BUS_CHANNEL_PREFIX`
+
+Current env support is implemented for `postgres`.
+
+Defaults:
+
+- `EVENT_BUS_DRIVER=postgres`
+- `EVENT_BUS_CHANNEL_PREFIX=event_bus`
+
+`EVENT_BUS_POSTGRES_URL` is required when using `postgres`.
+
+### Google Pub/Sub Example
+
 ```ts
 import { createEventBus } from '@langgo/event-bus-client';
 
 const eventBus = createEventBus({
   driver: 'google-pubsub',
-  google: {
+  config: {
     projectId: process.env.GCP_PROJECT_ID!,
   },
 });

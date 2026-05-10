@@ -1,6 +1,8 @@
+import { maskConnectionString } from '../logger';
 import type {
   EventBusDriver,
   EventHandler,
+  EventBusLogger,
   EventMessage,
   PostgresDriverConfig,
   PublishAck,
@@ -51,12 +53,20 @@ export class PostgresDriver implements EventBusDriver {
   private publisher?: PostgresClient;
   private subscriber?: PostgresClient;
 
-  constructor(private readonly config: PostgresDriverConfig) {}
+  constructor(
+    private readonly config: PostgresDriverConfig,
+    private readonly logger: EventBusLogger
+  ) {}
 
   async publish<TPayload = unknown>(topic: string, payload: TPayload): Promise<PublishAck> {
     const client = await this.getPublisher();
     const publishedAt = new Date().toISOString();
     const channel = this.getChannelName(topic);
+    this.logger.info('[event-bus-client] publishing event', {
+      driver: 'postgres',
+      topic,
+      channel
+    });
 
     await client.query('SELECT pg_notify($1, $2)', [
       channel,
@@ -82,6 +92,11 @@ export class PostgresDriver implements EventBusDriver {
     const client = await this.getSubscriber();
     const channel = this.getChannelName(topic);
 
+    this.logger.info('[event-bus-client] subscribing to event', {
+      driver: 'postgres',
+      topic,
+      channel
+    });
     await client.query(`LISTEN ${channel}`);
 
     const listener = async (message: PostgresNotification) => {
@@ -116,6 +131,11 @@ export class PostgresDriver implements EventBusDriver {
       driver: 'postgres',
       topic,
       unsubscribe: async () => {
+        this.logger.info('[event-bus-client] unsubscribing from event', {
+          driver: 'postgres',
+          topic,
+          channel
+        });
         client.removeListener('notification', notificationListener);
         await client.query(`UNLISTEN ${channel}`);
       }
@@ -123,6 +143,9 @@ export class PostgresDriver implements EventBusDriver {
   }
 
   async close(): Promise<void> {
+    this.logger.info('[event-bus-client] closing Postgres driver', {
+      driver: 'postgres'
+    });
     if (this.publisher) {
       await this.publisher.end();
       this.publisher = undefined;
@@ -140,6 +163,10 @@ export class PostgresDriver implements EventBusDriver {
     }
 
     const { Client } = loadPgModule();
+    this.logger.info('[event-bus-client] connecting Postgres publisher', {
+      driver: 'postgres',
+      connectionString: maskConnectionString(this.config.connectionString)
+    });
     this.publisher = new Client({ connectionString: this.config.connectionString });
     await this.publisher.connect();
     return this.publisher;
@@ -151,6 +178,10 @@ export class PostgresDriver implements EventBusDriver {
     }
 
     const { Client } = loadPgModule();
+    this.logger.info('[event-bus-client] connecting Postgres subscriber', {
+      driver: 'postgres',
+      connectionString: maskConnectionString(this.config.connectionString)
+    });
     this.subscriber = new Client({ connectionString: this.config.connectionString });
     await this.subscriber.connect();
     return this.subscriber;

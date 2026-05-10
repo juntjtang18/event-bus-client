@@ -1,6 +1,7 @@
 import type {
   EventBusDriver,
   EventHandler,
+  EventBusLogger,
   EventMessage,
   GooglePubSubDriverConfig,
   PublishAck,
@@ -71,14 +72,28 @@ function loadGooglePubSubModule(): PubSubModule {
 export class GooglePubSubDriver implements EventBusDriver {
   private readonly client: GooglePubSubClient;
 
-  constructor(private readonly config: GooglePubSubDriverConfig) {
+  constructor(
+    private readonly config: GooglePubSubDriverConfig,
+    private readonly logger: EventBusLogger
+  ) {
     const { PubSub } = loadGooglePubSubModule();
+    this.logger.info('[event-bus-client] creating Google Pub/Sub client', {
+      driver: 'google-pubsub',
+      projectId: config.projectId,
+      topicPrefix: config.topicPrefix,
+      subscriptionPrefix: config.subscriptionPrefix
+    });
     this.client = new PubSub({ projectId: config.projectId });
   }
 
   async publish<TPayload = unknown>(topic: string, payload: TPayload): Promise<PublishAck> {
     const publishedAt = new Date().toISOString();
     const topicRef = await this.ensureTopic(topic);
+    this.logger.info('[event-bus-client] publishing event', {
+      driver: 'google-pubsub',
+      topic,
+      topicName: topicRef.name
+    });
     const messageId = await topicRef.publishMessage({
       data: Buffer.from(
         JSON.stringify({
@@ -106,6 +121,12 @@ export class GooglePubSubDriver implements EventBusDriver {
     options?: SubscribeOptions
   ): Promise<SubscriptionHandle> {
     const subscription = await this.ensureSubscription(topic, options?.consumerName);
+    this.logger.info('[event-bus-client] subscribing to event', {
+      driver: 'google-pubsub',
+      topic,
+      subscriptionName: subscription.name,
+      consumerName: options?.consumerName
+    });
 
     const listener = async (message: GoogleSubscriptionMessage) => {
       let parsed: GooglePubSubMessageShape<TPayload>;
@@ -154,6 +175,11 @@ export class GooglePubSubDriver implements EventBusDriver {
       driver: 'google-pubsub',
       topic,
       unsubscribe: async () => {
+        this.logger.info('[event-bus-client] unsubscribing from event', {
+          driver: 'google-pubsub',
+          topic,
+          subscriptionName: subscription.name
+        });
         subscription.removeListener('message', messageListener);
         if (typeof subscription.close === 'function') {
           await subscription.close();
@@ -163,6 +189,9 @@ export class GooglePubSubDriver implements EventBusDriver {
   }
 
   async close(): Promise<void> {
+    this.logger.info('[event-bus-client] closing Google Pub/Sub client', {
+      driver: 'google-pubsub'
+    });
     if (typeof this.client.close === 'function') {
       await this.client.close();
     }
@@ -187,6 +216,11 @@ export class GooglePubSubDriver implements EventBusDriver {
         throw new Error(`Google Pub/Sub topic "${topicName}" does not exist.`);
       }
 
+      this.logger.info('[event-bus-client] creating Google Pub/Sub topic', {
+        driver: 'google-pubsub',
+        topic,
+        topicName
+      });
       const [createdTopic] = await this.client.createTopic(topicName);
       return createdTopic;
     }
@@ -205,6 +239,11 @@ export class GooglePubSubDriver implements EventBusDriver {
         throw new Error(`Google Pub/Sub subscription "${subscriptionName}" does not exist.`);
       }
 
+      this.logger.info('[event-bus-client] creating Google Pub/Sub subscription', {
+        driver: 'google-pubsub',
+        topic,
+        subscriptionName
+      });
       const [createdSubscription] = await this.client.createSubscription(topicRef, subscriptionName);
       return createdSubscription;
     }

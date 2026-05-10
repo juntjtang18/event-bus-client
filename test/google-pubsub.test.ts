@@ -13,7 +13,7 @@ describe('GooglePubSubDriver', () => {
     const topic = uniqueName('flashcard.added');
     const eventBus = createEventBus({
       driver: 'google-pubsub',
-      google: {
+      config: {
         projectId: 'test-project'
       }
     });
@@ -33,7 +33,7 @@ describe('GooglePubSubDriver', () => {
     const topic = uniqueName('flashcard.added');
     const eventBus = createEventBus({
       driver: 'google-pubsub',
-      google: {
+      config: {
         projectId: 'test-project'
       }
     });
@@ -79,7 +79,7 @@ describe('GooglePubSubDriver', () => {
     const topic = uniqueName('flashcard.added');
     const eventBus = createEventBus({
       driver: 'google-pubsub',
-      google: {
+      config: {
         projectId: 'test-project'
       }
     });
@@ -137,7 +137,7 @@ describe('GooglePubSubDriver', () => {
     const topic = uniqueName('flashcard.added');
     const eventBus = createEventBus({
       driver: 'google-pubsub',
-      google: {
+      config: {
         projectId: 'test-project'
       }
     });

@@ -1,6 +1,8 @@
+import { maskConnectionString } from '../logger';
 import type {
   EventBusDriver,
   EventHandler,
+  EventBusLogger,
   EventMessage,
   PublishAck,
   RabbitMqDriverConfig,
@@ -71,11 +73,19 @@ export class RabbitMqDriver implements EventBusDriver {
   private connection?: RabbitConnection;
   private channel?: RabbitChannel;
 
-  constructor(private readonly config: RabbitMqDriverConfig) {}
+  constructor(
+    private readonly config: RabbitMqDriverConfig,
+    private readonly logger: EventBusLogger
+  ) {}
 
   async publish<TPayload = unknown>(topic: string, payload: TPayload): Promise<PublishAck> {
     const channel = await this.getChannel();
     const publishedAt = new Date().toISOString();
+    this.logger.info('[event-bus-client] publishing event', {
+      driver: 'rabbitmq',
+      topic,
+      exchange: this.getExchangeName()
+    });
 
     channel.publish(
       this.getExchangeName(),
@@ -111,6 +121,13 @@ export class RabbitMqDriver implements EventBusDriver {
     });
 
     await channel.bindQueue(queue, this.getExchangeName(), topic);
+    this.logger.info('[event-bus-client] subscribing to event', {
+      driver: 'rabbitmq',
+      topic,
+      queue,
+      consumerName: options?.consumerName,
+      exchange: this.getExchangeName()
+    });
 
     const { consumerTag } = await channel.consume(
       queue,
@@ -130,12 +147,21 @@ export class RabbitMqDriver implements EventBusDriver {
       driver: 'rabbitmq',
       topic,
       unsubscribe: async () => {
+        this.logger.info('[event-bus-client] unsubscribing from event', {
+          driver: 'rabbitmq',
+          topic,
+          queue,
+          consumerTag
+        });
         await channel.cancel(consumerTag);
       }
     };
   }
 
   async close(): Promise<void> {
+    this.logger.info('[event-bus-client] closing RabbitMQ driver', {
+      driver: 'rabbitmq'
+    });
     if (this.channel) {
       await this.channel.close();
       this.channel = undefined;
@@ -153,6 +179,12 @@ export class RabbitMqDriver implements EventBusDriver {
     }
 
     const amqplib = loadAmqplibModule();
+    this.logger.info('[event-bus-client] connecting RabbitMQ client', {
+      driver: 'rabbitmq',
+      url: maskConnectionString(this.config.url),
+      exchange: this.getExchangeName(),
+      exchangeType: this.config.exchangeType ?? 'topic'
+    });
     this.connection = await amqplib.connect(this.config.url);
     this.channel = await this.connection.createChannel();
     await this.channel.assertExchange(this.getExchangeName(), this.config.exchangeType ?? 'topic', {

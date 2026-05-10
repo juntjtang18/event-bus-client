@@ -1,5 +1,11 @@
 export type DriverName = 'google-pubsub' | 'postgres' | 'rabbitmq';
 
+export interface EventBusLogger {
+  info(message: string, meta?: Record<string, unknown>): void;
+  warn?(message: string, meta?: Record<string, unknown>): void;
+  error?(message: string, meta?: Record<string, unknown>): void;
+}
+
 export interface PublishAck {
   driver: DriverName;
   topic: string;
@@ -52,6 +58,7 @@ export interface GooglePubSubDriverConfig {
   subscriptionPrefix?: string;
   autoCreateTopics?: boolean;
   autoCreateSubscriptions?: boolean;
+  logger?: EventBusLogger;
 }
 
 export interface RabbitMqDriverConfig {
@@ -62,23 +69,34 @@ export interface RabbitMqDriverConfig {
   durable?: boolean;
   prefetch?: number;
   messagePersistent?: boolean;
+  logger?: EventBusLogger;
 }
 
 export interface PostgresDriverConfig {
   connectionString: string;
   channelPrefix?: string;
+  logger?: EventBusLogger;
+}
+
+export interface DriverConfigMap {
+  'google-pubsub': GooglePubSubDriverConfig;
+  rabbitmq: RabbitMqDriverConfig;
+  postgres: PostgresDriverConfig;
 }
 
 export type CreateEventBusOptions =
   | {
       driver: 'google-pubsub';
-      google: GooglePubSubDriverConfig;
+      config: GooglePubSubDriverConfig;
+      logger?: EventBusLogger;
     }
   | {
       driver: 'rabbitmq';
-      rabbitmq: RabbitMqDriverConfig;
+      config: RabbitMqDriverConfig;
+      logger?: EventBusLogger;
     }
   | {
       driver: 'postgres';
-      postgres: PostgresDriverConfig;
+      config: PostgresDriverConfig;
+      logger?: EventBusLogger;
     };

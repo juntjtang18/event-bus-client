@@ -46,7 +46,7 @@
   "peerDependencies": {
     "@google-cloud/pubsub": "^4.0.0",
     "amqplib": "^0.10.0",
-    "pg": "^8.0.0"
+    "pg": "^8.20.0"
   },
   "peerDependenciesMeta": {
     "@google-cloud/pubsub": {
