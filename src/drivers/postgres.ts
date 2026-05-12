@@ -52,6 +52,10 @@ function loadPgModule(): PgModule {
 export class PostgresDriver implements EventBusDriver {
   private publisher?: PostgresClient;
   private subscriber?: PostgresClient;
+  private readonly channelHandlers = new Map<string, Set<EventHandler<unknown>>>();
+  private readonly notificationListener = (message: PostgresNotification) => {
+    void this.handleNotification(message);
+  };
 
   constructor(
     private readonly config: PostgresDriverConfig,
@@ -91,41 +95,19 @@ export class PostgresDriver implements EventBusDriver {
   ): Promise<SubscriptionHandle> {
     const client = await this.getSubscriber();
     const channel = this.getChannelName(topic);
+    const handlers = this.channelHandlers.get(channel) ?? new Set<EventHandler<unknown>>();
+    const shouldListen = handlers.size === 0;
 
     this.logger.info('[event-bus-client] subscribing to event', {
       driver: 'postgres',
       topic,
       channel
     });
-    await client.query(`LISTEN ${channel}`);
-
-    const listener = async (message: PostgresNotification) => {
-      if (message.channel !== channel || !message.payload) {
-        return;
-      }
-
-      const parsed = JSON.parse(message.payload) as PostgresMessageShape<TPayload>;
-      const eventMessage: EventMessage<TPayload> = {
-        topic: parsed.topic ?? topic,
-        payload: parsed.payload,
-        publishedAt: parsed.publishedAt,
-        raw: message,
-        ack: async () => {
-          return;
-        },
-        nack: async () => {
-          return;
-        }
-      };
-
-      await handler(eventMessage);
-    };
-
-    const notificationListener = (message: PostgresNotification) => {
-      void listener(message);
-    };
-
-    client.on('notification', notificationListener);
+    if (shouldListen) {
+      await client.query(`LISTEN ${channel}`);
+    }
+    handlers.add(handler as EventHandler<unknown>);
+    this.channelHandlers.set(channel, handlers);
 
     return {
       driver: 'postgres',
@@ -136,8 +118,15 @@ export class PostgresDriver implements EventBusDriver {
           topic,
           channel
         });
-        client.removeListener('notification', notificationListener);
-        await client.query(`UNLISTEN ${channel}`);
+        const currentHandlers = this.channelHandlers.get(channel);
+        if (!currentHandlers) {
+          return;
+        }
+        currentHandlers.delete(handler as EventHandler<unknown>);
+        if (currentHandlers.size === 0) {
+          this.channelHandlers.delete(channel);
+          await client.query(`UNLISTEN ${channel}`);
+        }
       }
     };
   }
@@ -152,9 +141,11 @@ export class PostgresDriver implements EventBusDriver {
     }
 
     if (this.subscriber) {
+      this.subscriber.removeListener('notification', this.notificationListener);
       await this.subscriber.end();
       this.subscriber = undefined;
     }
+    this.channelHandlers.clear();
   }
 
   private async getPublisher(): Promise<PostgresClient> {
@@ -184,11 +175,41 @@ export class PostgresDriver implements EventBusDriver {
     });
     this.subscriber = new Client({ connectionString: this.config.connectionString });
     await this.subscriber.connect();
+    this.subscriber.on('notification', this.notificationListener);
     return this.subscriber;
   }
 
   private getChannelName(topic: string): string {
     const prefix = this.config.channelPrefix ?? 'event_bus';
     return sanitizeName(`${prefix}_${topic}`);
+  }
+
+  private async handleNotification(message: PostgresNotification): Promise<void> {
+    if (!message.channel || !message.payload) {
+      return;
+    }
+
+    const handlers = this.channelHandlers.get(message.channel);
+    if (!handlers || handlers.size === 0) {
+      return;
+    }
+
+    const parsed = JSON.parse(message.payload) as PostgresMessageShape<unknown>;
+    const eventMessage: EventMessage<unknown> = {
+      topic: parsed.topic ?? '',
+      payload: parsed.payload,
+      publishedAt: parsed.publishedAt,
+      raw: message,
+      ack: async () => {
+        return;
+      },
+      nack: async () => {
+        return;
+      }
+    };
+
+    await Promise.all(Array.from(handlers, async (registeredHandler) => {
+      await registeredHandler(eventMessage);
+    }));
   }
 }
