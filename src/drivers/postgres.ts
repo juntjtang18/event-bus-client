@@ -17,14 +17,17 @@ interface PostgresMessageShape<TPayload = unknown> {
 }
 
 type PgModule = {
-  Client: new (options: { connectionString: string }) => PostgresClient;
+  Client: new (options: { connectionString: string; keepAlive?: boolean }) => PostgresClient;
 };
 
 type PostgresClient = {
   connect(): Promise<void>;
   query(queryText: string, values?: unknown[]): Promise<unknown>;
   on(event: 'notification', listener: (message: PostgresNotification) => void): void;
+  on(event: 'error', listener: (error: Error) => void): void;
+  on(event: 'end', listener: () => void): void;
   removeListener(event: 'notification', listener: (message: PostgresNotification) => void): void;
+  removeAllListeners(): void;
   end(): Promise<void>;
 };
 
@@ -52,9 +55,17 @@ function loadPgModule(): PgModule {
 export class PostgresDriver implements EventBusDriver {
   private publisher?: PostgresClient;
   private subscriber?: PostgresClient;
+  private subscriberConnectPromise?: Promise<PostgresClient>;
+  private reconnectTimer?: NodeJS.Timeout;
+  private closing = false;
   private readonly channelHandlers = new Map<string, Set<EventHandler<unknown>>>();
   private readonly notificationListener = (message: PostgresNotification) => {
-    void this.handleNotification(message);
+    void this.handleNotification(message).catch((error) => {
+      this.logger.error?.('[event-bus-client] Postgres notification handler failed', {
+        driver: 'postgres',
+        error
+      });
+    });
   };
 
   constructor(
@@ -125,7 +136,7 @@ export class PostgresDriver implements EventBusDriver {
         currentHandlers.delete(handler as EventHandler<unknown>);
         if (currentHandlers.size === 0) {
           this.channelHandlers.delete(channel);
-          await client.query(`UNLISTEN ${channel}`);
+          await this.subscriber?.query(`UNLISTEN ${channel}`);
         }
       }
     };
@@ -135,13 +146,19 @@ export class PostgresDriver implements EventBusDriver {
     this.logger.info('[event-bus-client] closing Postgres driver', {
       driver: 'postgres'
     });
+    this.closing = true;
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = undefined;
+    }
     if (this.publisher) {
+      this.publisher.removeAllListeners();
       await this.publisher.end();
       this.publisher = undefined;
     }
 
     if (this.subscriber) {
-      this.subscriber.removeListener('notification', this.notificationListener);
+      this.subscriber.removeAllListeners();
       await this.subscriber.end();
       this.subscriber = undefined;
     }
@@ -158,7 +175,22 @@ export class PostgresDriver implements EventBusDriver {
       driver: 'postgres',
       connectionString: maskConnectionString(this.config.connectionString)
     });
-    this.publisher = new Client({ connectionString: this.config.connectionString });
+    this.publisher = new Client({ connectionString: this.config.connectionString, keepAlive: true });
+    const publisher = this.publisher;
+    publisher.on('error', (error) => {
+      this.logger.error?.('[event-bus-client] Postgres publisher connection error', {
+        driver: 'postgres',
+        error
+      });
+      if (this.publisher === publisher) {
+        this.publisher = undefined;
+      }
+    });
+    publisher.on('end', () => {
+      if (this.publisher === publisher) {
+        this.publisher = undefined;
+      }
+    });
     await this.publisher.connect();
     return this.publisher;
   }
@@ -167,16 +199,43 @@ export class PostgresDriver implements EventBusDriver {
     if (this.subscriber) {
       return this.subscriber;
     }
+    if (this.subscriberConnectPromise) {
+      return this.subscriberConnectPromise;
+    }
 
+    this.subscriberConnectPromise = this.connectSubscriber();
+    try {
+      return await this.subscriberConnectPromise;
+    } finally {
+      this.subscriberConnectPromise = undefined;
+    }
+  }
+
+  private async connectSubscriber(): Promise<PostgresClient> {
     const { Client } = loadPgModule();
     this.logger.info('[event-bus-client] connecting Postgres subscriber', {
       driver: 'postgres',
       connectionString: maskConnectionString(this.config.connectionString)
     });
-    this.subscriber = new Client({ connectionString: this.config.connectionString });
-    await this.subscriber.connect();
-    this.subscriber.on('notification', this.notificationListener);
-    return this.subscriber;
+    const subscriber = new Client({ connectionString: this.config.connectionString, keepAlive: true });
+    subscriber.on('notification', this.notificationListener);
+    subscriber.on('error', (error) => {
+      this.logger.error?.('[event-bus-client] Postgres subscriber connection error', {
+        driver: 'postgres',
+        error
+      });
+      this.handleSubscriberDisconnect(subscriber);
+    });
+    subscriber.on('end', () => {
+      this.handleSubscriberDisconnect(subscriber);
+    });
+
+    await subscriber.connect();
+    this.subscriber = subscriber;
+    for (const channel of this.channelHandlers.keys()) {
+      await subscriber.query(`LISTEN ${channel}`);
+    }
+    return subscriber;
   }
 
   private getChannelName(topic: string): string {
@@ -211,5 +270,43 @@ export class PostgresDriver implements EventBusDriver {
     await Promise.all(Array.from(handlers, async (registeredHandler) => {
       await registeredHandler(eventMessage);
     }));
+  }
+
+  private handleSubscriberDisconnect(subscriber: PostgresClient): void {
+    if (this.closing || this.subscriber !== subscriber) {
+      return;
+    }
+    this.subscriber = undefined;
+    this.scheduleReconnect();
+  }
+
+  private scheduleReconnect(): void {
+    if (this.reconnectTimer || this.channelHandlers.size === 0) {
+      return;
+    }
+    this.reconnectTimer = setTimeout(() => {
+      this.reconnectTimer = undefined;
+      void this.reconnectSubscriber();
+    }, 1000);
+  }
+
+  private async reconnectSubscriber(): Promise<void> {
+    let delayMs = 1000;
+    while (!this.closing && this.channelHandlers.size > 0 && !this.subscriber) {
+      try {
+        await this.getSubscriber();
+        this.logger.info('[event-bus-client] Postgres subscriber reconnected', {
+          driver: 'postgres'
+        });
+        return;
+      } catch (error) {
+        this.logger.error?.('[event-bus-client] failed to reconnect Postgres subscriber', {
+          driver: 'postgres',
+          error
+        });
+        await new Promise((resolve) => setTimeout(resolve, delayMs));
+        delayMs = Math.min(delayMs * 2, 30000);
+      }
+    }
   }
 }

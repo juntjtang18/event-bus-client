@@ -4,6 +4,8 @@ import type { EventBusLogger } from '../src/types';
 
 class FakePgClient {
   notificationListeners = new Set<(message: { channel: string; payload?: string }) => void>();
+  errorListeners = new Set<(error: Error) => void>();
+  endListeners = new Set<() => void>();
   listenCalls: string[] = [];
   unlistenCalls: string[] = [];
 
@@ -21,12 +23,26 @@ class FakePgClient {
     return {};
   }
 
-  on(_event: 'notification', listener: (message: { channel: string; payload?: string }) => void): void {
-    this.notificationListeners.add(listener);
+  on(event: 'notification' | 'error' | 'end', listener: any): void {
+    if (event === 'notification') {
+      this.notificationListeners.add(listener);
+    }
+    if (event === 'error') {
+      this.errorListeners.add(listener);
+    }
+    if (event === 'end') {
+      this.endListeners.add(listener);
+    }
   }
 
   removeListener(_event: 'notification', listener: (message: { channel: string; payload?: string }) => void): void {
     this.notificationListeners.delete(listener);
+  }
+
+  removeAllListeners(): void {
+    this.notificationListeners.clear();
+    this.errorListeners.clear();
+    this.endListeners.clear();
   }
 
   async end(): Promise<void> {
@@ -36,6 +52,12 @@ class FakePgClient {
   emitNotification(message: { channel: string; payload?: string }): void {
     for (const listener of this.notificationListeners) {
       listener(message);
+    }
+  }
+
+  emitError(error: Error): void {
+    for (const listener of this.errorListeners) {
+      listener(error);
     }
   }
 }
@@ -97,5 +119,38 @@ describe('PostgresDriver', () => {
       'UNLISTEN evt_flashcard_created',
       'UNLISTEN evt_flashcard_reviewed',
     ]);
+  });
+
+  it('attaches an error listener to the Postgres subscriber client', async () => {
+    const driver = new PostgresDriver(
+      { connectionString: 'postgres://user:pass@localhost:5432/test', channelPrefix: 'evt' },
+      logger
+    );
+    const fakeClient = new FakePgClient();
+
+    (driver as any).connectSubscriber = async function () {
+      fakeClient.on('notification', this.notificationListener);
+      fakeClient.on('error', (error: Error) => {
+        this.logger.error?.('[event-bus-client] Postgres subscriber connection error', {
+          driver: 'postgres',
+          error
+        });
+        this.handleSubscriberDisconnect(fakeClient);
+      });
+      fakeClient.on('end', () => {
+        this.handleSubscriberDisconnect(fakeClient);
+      });
+      this.subscriber = fakeClient;
+      return fakeClient;
+    };
+
+    await driver.subscribe('flashcard.created', vi.fn());
+
+    expect(fakeClient.errorListeners.size).toBe(1);
+    expect(() => fakeClient.emitError(new Error('Connection terminated unexpectedly'))).not.toThrow();
+    expect(logger.error).toHaveBeenCalledWith(
+      '[event-bus-client] Postgres subscriber connection error',
+      expect.objectContaining({ driver: 'postgres' })
+    );
   });
 });
