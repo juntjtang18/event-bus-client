@@ -83,14 +83,26 @@ export class PostgresDriver implements EventBusDriver {
       channel
     });
 
-    await client.query('SELECT pg_notify($1, $2)', [
-      channel,
-      JSON.stringify({
+    try {
+      await client.query('SELECT pg_notify($1, $2)', [
+        channel,
+        JSON.stringify({
+          topic,
+          payload,
+          publishedAt
+        } satisfies PostgresMessageShape<TPayload>)
+      ]);
+    } catch (error) {
+      if (this.publisher === client) {
+        this.publisher = undefined;
+      }
+      this.logger.error?.('[event-bus-client] Postgres publish failed', {
+        driver: 'postgres',
         topic,
-        payload,
-        publishedAt
-      } satisfies PostgresMessageShape<TPayload>)
-    ]);
+        error
+      });
+      throw error;
+    }
 
     return {
       driver: 'postgres',
@@ -115,7 +127,20 @@ export class PostgresDriver implements EventBusDriver {
       channel
     });
     if (shouldListen) {
-      await client.query(`LISTEN ${channel}`);
+      try {
+        await client.query(`LISTEN ${channel}`);
+      } catch (error) {
+        if (this.subscriber === client) {
+          this.subscriber = undefined;
+        }
+        this.logger.error?.('[event-bus-client] Postgres LISTEN failed', {
+          driver: 'postgres',
+          topic,
+          channel,
+          error
+        });
+        throw error;
+      }
     }
     handlers.add(handler as EventHandler<unknown>);
     this.channelHandlers.set(channel, handlers);
@@ -136,7 +161,16 @@ export class PostgresDriver implements EventBusDriver {
         currentHandlers.delete(handler as EventHandler<unknown>);
         if (currentHandlers.size === 0) {
           this.channelHandlers.delete(channel);
-          await this.subscriber?.query(`UNLISTEN ${channel}`);
+          try {
+            await this.subscriber?.query(`UNLISTEN ${channel}`);
+          } catch (error) {
+            this.logger.error?.('[event-bus-client] Postgres UNLISTEN failed', {
+              driver: 'postgres',
+              topic,
+              channel,
+              error
+            });
+          }
         }
       }
     };
