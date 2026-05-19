@@ -36,10 +36,11 @@ npm install pg
 import { createEventBus } from '@langgo/event-bus-client';
 
 const eventBus = createEventBus({
-  driver: 'postgres',
+  driver: 'google-pubsub',
   config: {
-    connectionString: process.env.EVENT_BUS_POSTGRES_URL!,
-    channelPrefix: process.env.EVENT_BUS_CHANNEL_PREFIX || 'event_bus',
+    projectId: process.env.GCP_PROJECT_ID!,
+    topicPrefix: process.env.EVENT_BUS_TOPIC_PREFIX,
+    subscriptionPrefix: process.env.EVENT_BUS_SUBSCRIPTION_PREFIX || 'event-bus-client',
   },
 });
 ```
@@ -55,29 +56,43 @@ const eventBus = createEventBusFromEnv();
 `createEventBusFromEnv()` reads:
 
 - `EVENT_BUS_DRIVER`
+- `GCP_PROJECT_ID`
+- `EVENT_BUS_TOPIC_PREFIX`
+- `EVENT_BUS_SUBSCRIPTION_PREFIX`
 - `EVENT_BUS_POSTGRES_URL`
 - `EVENT_BUS_CHANNEL_PREFIX`
 
-Current env support is implemented for `postgres`.
+Current env support is implemented for `google-pubsub` and `postgres`.
 
 Defaults:
 
-- `EVENT_BUS_DRIVER=postgres`
+- `EVENT_BUS_DRIVER=google-pubsub`
+- `EVENT_BUS_SUBSCRIPTION_PREFIX=event-bus-client`
 - `EVENT_BUS_CHANNEL_PREFIX=event_bus`
 
+`GCP_PROJECT_ID` is required when using `google-pubsub`.
 `EVENT_BUS_POSTGRES_URL` is required when using `postgres`.
 
-### Google Pub/Sub Example
+### Postgres Example
 
 ```ts
 import { createEventBus } from '@langgo/event-bus-client';
 
 const eventBus = createEventBus({
-  driver: 'google-pubsub',
+  driver: 'postgres',
   config: {
-    projectId: process.env.GCP_PROJECT_ID!,
+    connectionString: process.env.EVENT_BUS_POSTGRES_URL!,
+    channelPrefix: process.env.EVENT_BUS_CHANNEL_PREFIX || 'event_bus',
   },
 });
+```
+
+### Publish And Subscribe
+
+```ts
+import { createEventBusFromEnv } from '@langgo/event-bus-client';
+
+const eventBus = createEventBusFromEnv();
 
 await eventBus.publish('flashcard.added', {
   userId: 'u_123',

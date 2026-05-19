@@ -41,9 +41,18 @@ export function createEventBus(options: CreateEventBusOptions): EventBus {
 }
 
 export function createEventBusFromEnv(): EventBus {
-  const driver = process.env.EVENT_BUS_DRIVER ?? 'postgres';
+  const driver = process.env.EVENT_BUS_DRIVER ?? 'google-pubsub';
 
   switch (driver) {
+    case 'google-pubsub':
+      return createEventBus({
+        driver,
+        config: {
+          projectId: getRequiredEnvVar('GCP_PROJECT_ID'),
+          topicPrefix: process.env.EVENT_BUS_TOPIC_PREFIX,
+          subscriptionPrefix: process.env.EVENT_BUS_SUBSCRIPTION_PREFIX ?? 'event-bus-client'
+        }
+      });
     case 'postgres':
       return createEventBus({
         driver,
@@ -54,7 +63,7 @@ export function createEventBusFromEnv(): EventBus {
       });
     default:
       throw new Error(
-        `Unsupported EVENT_BUS_DRIVER "${driver}". Supported drivers: postgres.`
+        `Unsupported EVENT_BUS_DRIVER "${driver}". Supported drivers: google-pubsub, postgres.`
       );
   }
 }
